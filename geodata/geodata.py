@@ -1,7 +1,15 @@
+import io
 import shapefile    # pyshp
 from pyproj import CRS
-from osgeo import ogr
+from osgeo import ogr, osr
+from json import dumps, loads
 from zipfile import ZipFile
+import topojson as tp
+# RDH 1/15/2021 -- pytopojson preserves more significant digits and topojson
+# --- But to make it work I had to hack the source to insert an "items" key
+# --- into the geojson. Until the below code works out of the box, use
+# --- the python package "topojson"
+# from pytopojson import topology
 
 ##############################################################################
 #       Class: GeoData
@@ -55,6 +63,20 @@ class GeoData:
         }
         bbox_getter = bbox_method_switcher.get(self.format)
         return bbox_getter(self.data)
+
+    def getGeoJSON(self):
+        getGeoJSON_method_switcher = {
+            'shp': getShapefileAsGeoJSON,
+        }
+        geojson_getter = getGeoJSON_method_switcher.get(self.format)
+        return geojson_getter(self.data)
+
+    def getTopoJSON(self):
+        getTopoJSON_method_switcher = {
+            'shp': getShapefileAsTopoJSON,
+        }
+        topojson_getter = getTopoJSON_method_switcher.get(self.format)
+        return topojson_getter(self.data)
 
 
 ##############################################################################
@@ -111,14 +133,28 @@ def readZipFile(file_name, projection):
                     dbf_file_name = subfile
                 if subfile[-4:].lower() == '.prj':
                     prj_file_name = subfile
-        # if prj_file_name:
-        if shp_file_name:
-            # projection = getShapefileProjection(prj_file_name, zipped=True, zip_source=zip)
-            # https://gis.stackexchange.com/a/92838 -- Thanks to gene
-            driver = ogr.GetDriverByName('ESRI Shapefile')
-            ogr_data = driver.Open(shp_file_name)
-            ogr_layer = ogr_data.GetLayer()
-            projection = ogr_layer.GetSpatialRef().ExportToProj4()
+        if prj_file_name:
+            prj_file = zipshape.open(prj_file_name, 'r')
+            prj_wkt_text = io.TextIOWrapper(prj_file).read()
+            prj_file.close()
+            srs = osr.SpatialReference()
+            srs.ImportFromWkt(prj_wkt_text)
+            projection = srs.ExportToProj4()
+            if not "+type=crs" in projection:
+                projection += " +type=crs"
+
+        # elif shp_file_name:
+        #     # this works great for unzipped shapefiles, but I can't figure out
+        #     #       how to make driver.Open() work with a zipped shapefile
+        #     #       Maybe I'll try with a tempfile approach:
+        #     #       https://lists.osgeo.org/pipermail/gdal-dev/2007-July/013636.html
+        #     # projection = getShapefileProjection(prj_file_name, zipped=True, zip_source=zip)
+        #     # https://gis.stackexchange.com/a/92838 -- Thanks to gene
+        #     driver = ogr.GetDriverByName('ESRI Shapefile')
+        #     import ipdb; ipdb.set_trace()
+        #     ogr_data = driver.Open(zipshape.open(shp_file_name))
+        #     ogr_layer = ogr_data.GetLayer()
+        #     projection = ogr_layer.GetSpatialRef().ExportToProj4()
         if shp_file_name and shx_file_name and dbf_file_name:
             shape_data = shapefile.Reader(
                 shp=zipshape.open(shp_file_name),
@@ -141,3 +177,22 @@ def getShapefileFeatureType(shape_data):
 
 def getShapefileBbox(shape_data):
     return shape_data.bbox
+
+def getShapefileAsGeoJSON(shape_data):
+    # Yanked straight from frankrowe at https://gist.github.com/frankrowe/6071443
+    fields = shape_data.fields[1:]
+    field_names = [field[0] for field in fields]
+    buffer = []
+    for sr in shape_data.shapeRecords():
+       atr = dict(zip(field_names, sr.record))
+       geom = sr.shape.__geo_interface__
+       buffer.append(dict(type="Feature", geometry=geom, properties=atr))
+
+    # generate the GeoJSON
+    return dumps({"type": "FeatureCollection", "features": buffer}, indent=2)
+
+def getShapefileAsTopoJSON(shape_data):
+    geojson_data = getShapefileAsGeoJSON(shape_data)
+    return tp.Topology(geojson_data, prequantize=False).to_json()
+    # topology_ = topology.Topology()
+    # return topology_(loads(geojson_data))

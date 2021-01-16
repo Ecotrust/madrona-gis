@@ -1,4 +1,5 @@
-import os
+import os, json
+import deepdiff # deepdiff
 from django.test import TestCase
 
 from geodata.geodata import GeoData
@@ -36,10 +37,20 @@ class ReaderTest(TestCase):
         ]))
 
         # Check GeoJSON
-        print("TODO: Check GeoJSON - compare string against existing file format, or save as file and compare checksum")
+        geojson = json.loads(geodata.getGeoJSON())
+        json_file = open("/usr/local/apps/marineplanner-core/apps/madrona-gis/geodata/tests/data/small_polygon_treatment_4326.geo.json")
+        file_dict = json.loads(json_file.read())
+        json_file.close()
+        diff = deepdiff.DeepDiff(geojson, file_dict, ignore_order=True) # json writer may not return coords in same order
+        self.assertEqual(diff, {})
 
         # Check TopoJSON
-        print("TODO: Check TopoJSON - compare string against existing file format, or save as file and compare checksum")
+        topojson = json.loads(geodata.getTopoJSON())
+        json_file = open("/usr/local/apps/marineplanner-core/apps/madrona-gis/geodata/tests/data/small_polygon_treatment_4326.topo.json")
+        file_dict = json.loads(json_file.read())
+        json_file.close()
+        diff = deepdiff.DeepDiff(topojson, file_dict, ignore_order=True) # json writer may not return coords in same order
+        self.assertEqual(diff, {})
 
         # Check WKT
         print("TODO: Check WKT")
