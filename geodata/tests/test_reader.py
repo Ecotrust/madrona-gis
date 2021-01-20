@@ -53,7 +53,9 @@ class ReaderTest(TestCase):
         self.assertEqual(diff, {})
 
         # Check WKT
-        print("TODO: Check WKT")
+        intended_WKT = ['POLYGON ((-120.4947423934937 48.3656588097174, -120.4916524887085 48.36691331574315, -120.4862880706787 48.3666852260369, -120.485258102417 48.35813112463419, -120.4904508590698 48.35624902954073, -120.494270324707 48.35604940931619, -120.4947423934937 48.3656588097174))'
+]
+        self.assertEqual(geodata.getWKT(), intended_WKT)
 
         # Check KML
         print("TODO: Check KML - compare string against existing file format, or save as file and compare checksum")

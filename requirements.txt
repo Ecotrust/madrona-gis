@@ -4,3 +4,5 @@ deepdiff
 geojson
 # pytopojson # had to hack this to make it work with our GeoJSON
 topojson
+# pygeoif
+shapely

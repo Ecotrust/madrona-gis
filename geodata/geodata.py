@@ -1,10 +1,12 @@
 import io
 import shapefile    # pyshp
+#import pygeoif      # pygeoif
 from pyproj import CRS
 from osgeo import ogr, osr
 from json import dumps, loads
 from zipfile import ZipFile
 import topojson as tp
+from shapely.geometry import shape as shapelyShape
 # RDH 1/15/2021 -- pytopojson preserves more significant digits and topojson
 # --- But to make it work I had to hack the source to insert an "items" key
 # --- into the geojson. Until the below code works out of the box, use
@@ -77,6 +79,13 @@ class GeoData:
         }
         topojson_getter = getTopoJSON_method_switcher.get(self.format)
         return topojson_getter(self.data)
+
+    def getWKT(self):
+        getWKT_method_switcher = {
+            'shp': getShapefileAsWKT,
+        }
+        wkt_getter = getWKT_method_switcher.get(self.format)
+        return wkt_getter(self.data)
 
 
 ##############################################################################
@@ -162,6 +171,10 @@ def readZipFile(file_name, projection):
                 dbf=zipshape.open(dbf_file_name),
             )
 
+        # shape_data is a "shapefile.Reader" object - should we convert this to a GEOS Collection? How?
+        #       GEOS Collection: bad - no attributes.
+        #       GeoPandas may be a great option, though! (Better than shapefile.Reader object)
+
         return {
             'data': shape_data,
             'format': 'shp',        # we have read the data from the zip - zip no longer matters
@@ -196,3 +209,24 @@ def getShapefileAsTopoJSON(shape_data):
     return tp.Topology(geojson_data, prequantize=False).to_json()
     # topology_ = topology.Topology()
     # return topology_(loads(geojson_data))
+
+# def getShapefileAsGEOSCollection(shape_data):
+#     geojson_data = loads(getShapefileAsGeoJSON(shape_data))
+
+def getShapefileGeometriesAsShapely(shape_data):
+    # Note: Shapely geometries do not maintain attributes!
+    geojson_data = loads(getShapefileAsGeoJSON(shape_data))
+    shapely_collection = []
+    for feature in geojson_data['features']:
+        shapely_collection.append(shapelyShape(feature['geometry']))
+    return shapely_collection
+
+
+def getShapefileAsWKT(shape_data):
+    # NOTE: WKT data does not maintain attributes!
+
+    # I started down this path:
+    #       https://gis.stackexchange.com/questions/202662/export-geometry-to-wkt-using-pyshp#:~:text=Pyshp%20does%20not%20have%20a,module%20to%20convert%20to%20WKT.
+    # However, it requires that you know the feature type (it assumes MultiPoint)
+
+    return [shape.wkt for shape in getShapefileGeometriesAsShapely(shape_data)]
