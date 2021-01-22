@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document id="root_doc">
+<Schema name="tmpfozk74un" id="tmpfozk74un">
+	<SimpleField name="FID" type="string"></SimpleField>
+</Schema>
+<Folder><name>tmpfozk74un</name>
+  <Placemark>
+	<Style><LineStyle><color>ff0000ff</color></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>
+	<ExtendedData><SchemaData schemaUrl="#tmpfozk74un">
+		<SimpleData name="FID">0</SimpleData>
+	</SchemaData></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>-120.494742393494,48.3656588097174 -120.491652488708,48.3669133157432 -120.486288070679,48.3666852260369 -120.485258102417,48.3581311246342 -120.49045085907,48.3562490295407 -120.494270324707,48.3560494093162 -120.494742393494,48.3656588097174</coordinates></LinearRing></outerBoundaryIs></Polygon>
+  </Placemark>
+</Folder>
+</Document></kml>

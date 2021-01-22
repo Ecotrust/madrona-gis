@@ -1,91 +1,71 @@
 import io
-import shapefile    # pyshp
-#import pygeoif      # pygeoif
-from pyproj import CRS
-from osgeo import ogr, osr
 from json import dumps, loads
 from zipfile import ZipFile
 import topojson as tp
-from shapely.geometry import shape as shapelyShape
-# RDH 1/15/2021 -- pytopojson preserves more significant digits and topojson
-# --- But to make it work I had to hack the source to insert an "items" key
-# --- into the geojson. Until the below code works out of the box, use
-# --- the python package "topojson"
-# from pytopojson import topology
+import geopandas
+from django.core.files.temp import NamedTemporaryFile
+import fiona
 
 ##############################################################################
 #       Class: GeoData
 ##############################################################################
 
+#
+# GeoData
+# - Import various data formats and store data as a
+#       geopandas.geodatafram.GeoDataFrame
+# - Export data various formats using provided projection
+
 class GeoData:
     def __init__(self):
         self.data = None
-        self.format = None  # 'zip', 'shp', 'geojson', 'wkt', 'topojson', 'kml', 'sql'
-        self.crs = None  # Proj4 CRS
 
     def read(self, file_name, format=None, projection=None):
-        self.format = getDataFormat(file_name, format)
+        initial_format = getDataFormat(file_name, format)
         read_method_switcher = {
             'zip': readZipFile,
             # 'shp': readShapefile,
             # 'geojson': readGeoJSON
         }
-        reader = read_method_switcher.get(self.format)
-        reader_dict = reader(file_name, projection)
-        self.data = reader_dict['data']
-        self.format = reader_dict['format']
-        self.crs = reader_dict['projection']
+        reader = read_method_switcher.get(initial_format, projection)
+        self.data = reader(file_name)
 
     def getProjectionStr(self):
-        return self.crs.to_string()
+        return self.data.geometry.crs.to_string()
+
+    def getProjectionAsProj4(self):
+        return self.data.geometry.crs.to_proj4()
 
     def getProjectionID(self):
-        return self.crs.to_epsg()
+        return self.data.geometry.crs.to_epsg()
 
     def getFeatureCount(self):
-        count_method_switcher = {
-            'shp': countShapefileFeatures,
-            # 'shp': readShapefile,
-            # 'geojson': readGeoJSON
-        }
-        counter = count_method_switcher.get(self.format)
-        return counter(self.data)
+        return self.data.geometry.count()
 
-    def getFeatureType(self):
-        type_method_switcher = {
-            'shp': getShapefileFeatureType,
-        }
-
-        type_finder = type_method_switcher.get(self.format)
-        return type_finder(self.data)
+    def getFeatureTypes(self):
+        return self.data.geometry.type.to_list()
 
     def getBbox(self):
-        bbox_method_switcher = {
-            'shp': getShapefileBbox,
-        }
-        bbox_getter = bbox_method_switcher.get(self.format)
-        return bbox_getter(self.data)
+        envelope = self.data.geometry.envelope.to_list()[0]
+        return envelope.to_wkt()
 
     def getGeoJSON(self):
-        getGeoJSON_method_switcher = {
-            'shp': getShapefileAsGeoJSON,
-        }
-        geojson_getter = getGeoJSON_method_switcher.get(self.format)
-        return geojson_getter(self.data)
+        return self.data.to_json()
 
     def getTopoJSON(self):
-        getTopoJSON_method_switcher = {
-            'shp': getShapefileAsTopoJSON,
-        }
-        topojson_getter = getTopoJSON_method_switcher.get(self.format)
-        return topojson_getter(self.data)
+        return tp.Topology(loads(self.getGeoJSON())['features'], prequantize=False).to_json()
 
     def getWKT(self):
-        getWKT_method_switcher = {
-            'shp': getShapefileAsWKT,
-        }
-        wkt_getter = getWKT_method_switcher.get(self.format)
-        return wkt_getter(self.data)
+        geometries = [geom.to_wkt() for geom in self.data.geometry.to_list()]
+        return "GEOMETRYCOLLECTION (%s)" % ", ".join(geometries)
+
+    def getKML(self):
+        fiona.supported_drivers['KML'] = 'rw'
+        tmp_kml_file = NamedTemporaryFile(mode='w+',delete=True)
+        self.data.to_file(tmp_kml_file.name, driver='KML')
+        kml_str = tmp_kml_file.file.read()
+        tmp_kml_file.close()
+        return kml_str
 
 
 ##############################################################################
@@ -127,106 +107,6 @@ def getDataFormat(file_name, format):
 ##############################################################################
 #       Helper Functions: shapefiles (array or zip)
 ##############################################################################
-def readZipFile(file_name, projection):
-        # with ZipFile(file_name, 'r') as zipshape:
-        zipshape = ZipFile(open(file_name, 'rb'))
-        subfiles = zipshape.namelist()
-        shp_file_name = shx_file_name = dbf_file_name = prj_file_name = False
-        for subfile in subfiles:
-            if subfile[-4:].lower() in ['.shp', '.shx', '.dbf', '.prj']:
-                if subfile[-4:].lower() == '.shp':
-                    shp_file_name = subfile
-                if subfile[-4:].lower() == '.shx':
-                    shx_file_name = subfile
-                if subfile[-4:].lower() == '.dbf':
-                    dbf_file_name = subfile
-                if subfile[-4:].lower() == '.prj':
-                    prj_file_name = subfile
-        if prj_file_name:
-            prj_file = zipshape.open(prj_file_name, 'r')
-            prj_wkt_text = io.TextIOWrapper(prj_file).read()
-            prj_file.close()
-            srs = osr.SpatialReference()
-            srs.ImportFromWkt(prj_wkt_text)
-            projection = srs.ExportToProj4()
-            if not "+type=crs" in projection:
-                projection += " +type=crs"
-
-        # elif shp_file_name:
-        #     # this works great for unzipped shapefiles, but I can't figure out
-        #     #       how to make driver.Open() work with a zipped shapefile
-        #     #       Maybe I'll try with a tempfile approach:
-        #     #       https://lists.osgeo.org/pipermail/gdal-dev/2007-July/013636.html
-        #     # projection = getShapefileProjection(prj_file_name, zipped=True, zip_source=zip)
-        #     # https://gis.stackexchange.com/a/92838 -- Thanks to gene
-        #     driver = ogr.GetDriverByName('ESRI Shapefile')
-        #     import ipdb; ipdb.set_trace()
-        #     ogr_data = driver.Open(zipshape.open(shp_file_name))
-        #     ogr_layer = ogr_data.GetLayer()
-        #     projection = ogr_layer.GetSpatialRef().ExportToProj4()
-        if shp_file_name and shx_file_name and dbf_file_name:
-            shape_data = shapefile.Reader(
-                shp=zipshape.open(shp_file_name),
-                shx=zipshape.open(shx_file_name),
-                dbf=zipshape.open(dbf_file_name),
-            )
-
-        # shape_data is a "shapefile.Reader" object - should we convert this to a GEOS Collection? How?
-        #       GEOS Collection: bad - no attributes.
-        #       GeoPandas may be a great option, though! (Better than shapefile.Reader object)
-
-        return {
-            'data': shape_data,
-            'format': 'shp',        # we have read the data from the zip - zip no longer matters
-            'projection': CRS.from_proj4(projection),
-        }
-
-def countShapefileFeatures(shape_data):
-    shapes = shape_data.shapes()
-    return len(shapes)
-
-def getShapefileFeatureType(shape_data):
-    return shape_data.shapeTypeName
-
-def getShapefileBbox(shape_data):
-    return shape_data.bbox
-
-def getShapefileAsGeoJSON(shape_data):
-    # Yanked straight from frankrowe at https://gist.github.com/frankrowe/6071443
-    fields = shape_data.fields[1:]
-    field_names = [field[0] for field in fields]
-    buffer = []
-    for sr in shape_data.shapeRecords():
-       atr = dict(zip(field_names, sr.record))
-       geom = sr.shape.__geo_interface__
-       buffer.append(dict(type="Feature", geometry=geom, properties=atr))
-
-    # generate the GeoJSON
-    return dumps({"type": "FeatureCollection", "features": buffer}, indent=2)
-
-def getShapefileAsTopoJSON(shape_data):
-    geojson_data = getShapefileAsGeoJSON(shape_data)
-    return tp.Topology(geojson_data, prequantize=False).to_json()
-    # topology_ = topology.Topology()
-    # return topology_(loads(geojson_data))
-
-# def getShapefileAsGEOSCollection(shape_data):
-#     geojson_data = loads(getShapefileAsGeoJSON(shape_data))
-
-def getShapefileGeometriesAsShapely(shape_data):
-    # Note: Shapely geometries do not maintain attributes!
-    geojson_data = loads(getShapefileAsGeoJSON(shape_data))
-    shapely_collection = []
-    for feature in geojson_data['features']:
-        shapely_collection.append(shapelyShape(feature['geometry']))
-    return shapely_collection
-
-
-def getShapefileAsWKT(shape_data):
-    # NOTE: WKT data does not maintain attributes!
-
-    # I started down this path:
-    #       https://gis.stackexchange.com/questions/202662/export-geometry-to-wkt-using-pyshp#:~:text=Pyshp%20does%20not%20have%20a,module%20to%20convert%20to%20WKT.
-    # However, it requires that you know the feature type (it assumes MultiPoint)
-
-    return [shape.wkt for shape in getShapefileGeometriesAsShapely(shape_data)]
+def readZipFile(file_name):
+        gdf = geopandas.read_file("zip://%s" % file_name)
+        return gdf
