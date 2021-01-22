@@ -67,7 +67,28 @@ class ReaderTest(TestCase):
         self.assertEqual(file_str, kml_str.replace(tmp_name, test_tmp_name))
 
         # Check SQL
-        print("TODO: Check SQL - compare string against existing file format, or save as file and compare checksum")
+        sql_str = geodata.getPGSQL()
+        sql_file = open("/usr/local/apps/marineplanner-core/apps/madrona-gis/geodata/tests/data/small_polygon_treatment_4326.sql")
+        file_str = sql_file.read()
+        sql_file.close()
+        tmp_name_index = sql_str.index("DROP TABLE IF EXISTS \"public\".\"") + 31
+        tmp_name_length = 11
+        tmp_name = sql_str[tmp_name_index:tmp_name_index+tmp_name_length]
+        test_tmp_name = 'small_polygon_treatment_4326'
+        self.assertEqual(file_str, sql_str.replace(tmp_name, test_tmp_name))
+
+        # Check .SHP
+        # TODO: How?
+
+        # Check reprojected GeoJSON
+        geojson = json.loads(geodata.getGeoJSON("EPSG:3857"))
+        json_file = open("/usr/local/apps/marineplanner-core/apps/madrona-gis/geodata/tests/data/small_polygon_treatment_3857.geo.json")
+        file_dict = json.loads(json_file.read())
+        json_file.close()
+        diff = deepdiff.DeepDiff(geojson, file_dict, ignore_order=True) # json writer may not return coords in same order
+        self.assertEqual(diff, {})
 
         # Check reprojected WKT
-        print("TODO: Check reprojected WKT")
+        intended_WKT = 'GEOMETRYCOLLECTION (POLYGON ((-120.4947423934936523 48.3656588097173952, -120.4916524887084961 48.3669133157431546, -120.4862880706787109 48.3666852260368998, -120.4852581024169780 48.3581311246341912, -120.4904508590698100 48.3562490295407343, -120.4942703247070312 48.3560494093161850, -120.4947423934936523 48.3656588097173952)))'
+        # Okay, so reprojecting from 4326 to 4326, but still worth testing!
+        self.assertEqual(geodata.getWKT(projection="EPSG:4326"), intended_WKT)

@@ -1,4 +1,4 @@
-import io
+import os, io
 from json import dumps, loads
 from zipfile import ZipFile
 import topojson as tp
@@ -20,7 +20,7 @@ class GeoData:
     def __init__(self):
         self.data = None
 
-    def read(self, file_name, format=None, projection=None):
+    def read(self, file_name, format=None, projection="EPSG:4326"):
         initial_format = getDataFormat(file_name, format)
         read_method_switcher = {
             'zip': readZipFile,
@@ -28,7 +28,7 @@ class GeoData:
             # 'geojson': readGeoJSON
         }
         reader = read_method_switcher.get(initial_format, projection)
-        self.data = reader(file_name)
+        self.data = reader(file_name, projection)
 
     def getProjectionStr(self):
         return self.data.geometry.crs.to_string()
@@ -45,28 +45,58 @@ class GeoData:
     def getFeatureTypes(self):
         return self.data.geometry.type.to_list()
 
-    def getBbox(self):
-        envelope = self.data.geometry.envelope.to_list()[0]
+    def getBbox(self, projection="EPSG:4326"):
+        envelope = self.data.to_crs(projection).geometry.envelope.to_list()[0]
         return envelope.to_wkt()
 
-    def getGeoJSON(self):
-        return self.data.to_json()
+    def getGeoJSON(self, projection="EPSG:4326"):
+        return self.data.to_crs(projection).to_json()
 
-    def getTopoJSON(self):
-        return tp.Topology(loads(self.getGeoJSON())['features'], prequantize=False).to_json()
+    def getTopoJSON(self, projection="EPSG:4326"):
+        return tp.Topology(loads(self.getGeoJSON(projection))['features'], prequantize=False).to_json()
 
-    def getWKT(self):
-        geometries = [geom.to_wkt() for geom in self.data.geometry.to_list()]
+    def getWKT(self, projection="EPSG:4326"):
+        geometries = [geom.to_wkt() for geom in self.data.to_crs(projection).geometry.to_list()]
         return "GEOMETRYCOLLECTION (%s)" % ", ".join(geometries)
 
-    def getKML(self):
+    def getKML(self, projection="EPSG:4326"):
         fiona.supported_drivers['KML'] = 'rw'
         tmp_kml_file = NamedTemporaryFile(mode='w+',delete=True)
-        self.data.to_file(tmp_kml_file.name, driver='KML')
+        self.data.to_crs(projection).to_file(tmp_kml_file.name, driver='KML')
         kml_str = tmp_kml_file.file.read()
         tmp_kml_file.close()
         return kml_str
 
+    # getPGSQL:
+    # - Get a string of a SQL script to import your data into a PostGIS DB
+    # TODO: allow method to accept DB name, table name, whether/not to delete table
+    def getPGSQL(self, projection="EPSG:4326"):
+        # Create temporary named file of GeoJSON output
+        tmp_json_file = NamedTemporaryFile(mode='w+',delete=True, suffix='.geo.json')
+        tmp_json_file.write(self.getGeoJSON(projection))
+        tmp_json_file.seek(0)
+        # Create temporary named file for new pgsql output
+        # we're using NamedTemporaryFile to create the unique filename...
+        tmp_sql_file = NamedTemporaryFile(mode='w+',delete=True, suffix='.sql')
+        tmp_sql_file_name = tmp_sql_file.name
+        tmp_sql_file.close()
+        # ... But we let ogr2ogr actually create the file and manually delete later.
+
+        # call ogr2ogr to populate .sql file
+        os.system('ogr2ogr -f "PGDUMP" %s %s -lco SRID=4326 -lco SCHEMA=public -lco EXTRACT_SCHEMA_FROM_LAYER_NAME="NO"' % (tmp_sql_file_name, tmp_json_file.name))
+        # get sql string from .sql file
+        tmp_sql_file = open(tmp_sql_file_name)
+        sql_str = tmp_sql_file.read()
+        # close all temporary files
+        tmp_json_file.close()
+        # tmp_sql_file.close()
+        os.remove(tmp_sql_file_name)
+        # return sql string.
+        return sql_str
+
+    def getSHP(self, projection="EPSG:4326"):
+        # foo
+        print("TODO: Wriet getSHP")
 
 ##############################################################################
 #       Helper Functions
@@ -107,6 +137,12 @@ def getDataFormat(file_name, format):
 ##############################################################################
 #       Helper Functions: shapefiles (array or zip)
 ##############################################################################
-def readZipFile(file_name):
+def readZipFile(file_name, projection="EPSG:4326"):
         gdf = geopandas.read_file("zip://%s" % file_name)
+        if not gdf.crs:
+            print("Data CRS undetected: assuming %s" % projection)
+            gdf.set_crs(projection)
+        if not gdf.crs.equals(projection):
+            print("Data source CRS does not match provided CRS. Reprojecting to %s" % projection)
+            gdf = gdf.to_crs(projection)
         return gdf
