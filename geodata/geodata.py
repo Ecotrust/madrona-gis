@@ -111,7 +111,7 @@ def getDataFormat(file_name, format):
     # Rasters?
     derived_format = "unknown"
 
-    if format.lower() == "zip" or format == None and file_name[-3:].lower() == "zip":
+    if format == None and file_name[-3:].lower() == "zip" or format and format.lower() == "zip":
         # TODO: sort out zip, gzip, bzip, tar, tar.gz, etc...
         if not file_name[-4:].lower() == ".zip":
             raise NotImplementedError("At this time, only zipped files of the '.zip' format are accepted")
