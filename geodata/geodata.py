@@ -13,7 +13,7 @@ import fiona
 #
 # GeoData
 # - Import various data formats and store data as a
-#       geopandas.geodatafram.GeoDataFrame
+#       geopandas.geodataframe.GeoDataFrame
 # - Export data various formats using provided projection
 
 class GeoData:
@@ -29,6 +29,17 @@ class GeoData:
         }
         reader = read_method_switcher.get(initial_format, projection)
         self.data = reader(file_name, projection)
+
+    def removeOverlap(self):
+        for target_geom in self.data.geometry:
+            if not target_geom.is_valid:
+                target_geom = target_geom.buffer(0)
+            if target_geom.is_valid:
+                for difference_geom in self.data.geometry:
+                    if not difference_geom.is_valid:
+                        difference_geom = difference_geom.buffer(0)
+                    if difference_geom.is_valid and not target_geom == difference_geom and target_geom.intersects(difference_geom) and target_geom.type == difference_geom.type:
+                        target_geom = target_geom.difference(difference_geom)
 
     def getProjectionStr(self):
         return self.data.geometry.crs.to_string()
@@ -49,14 +60,18 @@ class GeoData:
         envelope = self.data.to_crs(projection).geometry.envelope.to_list()[0]
         return envelope.to_wkt()
 
-    def getGeoJSON(self, projection="EPSG:4326"):
-        return self.data.to_crs(projection).to_json()
+    def getGeoJSON(self, data=None, projection="EPSG:4326"):
+        if not type(data) == geopandas.geodataframe.GeoDataFrame:
+            data = self.data
+        return data.to_crs(projection).to_json()
 
-    def getTopoJSON(self, projection="EPSG:4326"):
-        return tp.Topology(loads(self.getGeoJSON(projection))['features'], prequantize=False).to_json()
+    def getTopoJSON(self, projection="EPSG:4326", enforce_topo=False):
+        return tp.Topology(loads(self.getGeoJSON(projection))['features'], prequantize=False, topology=enforce_topo).to_json()
 
-    def getWKT(self, projection="EPSG:4326"):
-        geometries = [geom.to_wkt() for geom in self.data.to_crs(projection).geometry.to_list()]
+    def getWKT(self, data=None, projection="EPSG:4326"):
+        if not type(data) == geopandas.geodataframe.GeoDataFrame:
+            data = self.data
+        geometries = [geom.to_wkt() for geom in data.to_crs(projection).geometry.to_list()]
         return "GEOMETRYCOLLECTION (%s)" % ", ".join(geometries)
 
     def getKML(self, projection="EPSG:4326"):
@@ -97,6 +112,22 @@ class GeoData:
     def getSHP(self, projection="EPSG:4326"):
         # foo
         print("TODO: Wriet getSHP")
+
+    def getUnion(self, format='gdf', projection="EPSG:4326"):
+        union = self.data.unary_union
+        uniongs = geopandas.GeoSeries(union)
+        uniongdf = geopandas.GeoDataFrame(geometry=uniongs)
+        # set CRS
+        uniongdf.crs = self.data.crs
+        if format == 'geojson':
+            return self.getGeoJSON(data=uniongdf, projection=projection)
+        if format == 'wkt':
+            return self.getWKT(data=uniongdf, projection=projection)
+        else:
+            # TODO: support remaining formats as well, see "data" argument to override self.data
+            return uniongdf
+
+
 
 ##############################################################################
 #       Helper Functions
@@ -143,6 +174,6 @@ def readZipFile(file_name, projection="EPSG:4326"):
             print("Data CRS undetected: assuming %s" % projection)
             gdf.set_crs(projection)
         if not gdf.crs.equals(projection):
-            print("Data source CRS does not match provided CRS. Reprojecting to %s" % projection)
+            print("Data source CRS [%s] does not match provided CRS. Reprojecting to %s" % (gdf.crs.to_string(), projection))
             gdf = gdf.to_crs(projection)
         return gdf
